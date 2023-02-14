@@ -10,7 +10,7 @@ from droid_backend import DroidBackend
 from trajectory_filler import PoseTrajectoryFiller
 
 from collections import OrderedDict
-from torch.multiprocessing import Process
+from torch.multiprocessing import Process, Queue
 
 
 class Droid:
@@ -19,6 +19,13 @@ class Droid:
         self.load_weights(args.weights)
         self.args = args
         self.disable_vis = args.disable_vis
+        self.trajPoints=np.ndarray(shape=(1,3))
+        self.savePoints=np.ndarray(shape=(1,3))
+        self.remoPoints=np.ndarray(shape=(1,3))
+        self.saveQueue=Queue()
+        self.remQueue=Queue()
+        self.trajQueue=Queue()
+        self.remTrajQueue=Queue()
 
         # store images, depth, poses, intrinsics (shared between processes)
         self.video = DepthVideo(args.image_size, args.buffer, stereo=args.stereo)
@@ -35,7 +42,9 @@ class Droid:
         # visualizer
         if not self.disable_vis:
             from visualization import droid_visualization
-            self.visualizer = Process(target=droid_visualization, args=(self.video,))
+            print("starting viz")
+            self.visualizer = Process(target=droid_visualization, args=(self.video, self.saveQueue, self.remQueue, self.trajQueue,self.remTrajQueue))
+            print("started viz")
             self.visualizer.start()
 
         # post processor - fill in poses for non-keyframes
@@ -84,6 +93,6 @@ class Droid:
         print("#" * 32)
         self.backend(12)
 
-        camera_trajectory = self.traj_filler(stream)
-        return camera_trajectory.inv().data.cpu().numpy()
+        #camera_trajectory = self.traj_filler(stream)
+        #return camera_trajectory.inv().data.cpu().numpy()
 

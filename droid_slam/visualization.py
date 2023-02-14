@@ -9,6 +9,8 @@ import open3d as o3d
 
 from lietorch import SE3
 import geom.projective_ops as pops
+from torch.multiprocessing import Process, Queue
+
 
 CAM_POINTS = np.array([
         [ 0,   0,   0],
@@ -50,7 +52,7 @@ def create_point_actor(points, colors):
     point_cloud.colors = o3d.utility.Vector3dVector(colors)
     return point_cloud
 
-def droid_visualization(video, device="cuda:0"):
+def droid_visualization(video, saveQueue,remQueue,trajQueue,remTrajQueue,device="cuda:0"):
     """ DROID visualization frontend """
 
     torch.cuda.set_device(device)
@@ -96,7 +98,7 @@ def droid_visualization(video, device="cuda:0"):
             images = torch.index_select(video.images, 0, dirty_index)
             images = images.cpu()[:,[2,1,0],3::8,3::8].permute(0,2,3,1) / 255.0
             points = droid_backends.iproj(SE3(poses).inv().data, disps, video.intrinsics[0]).cpu()
-
+            
             thresh = droid_visualization.filter_thresh * torch.ones_like(disps.mean(dim=[1,2]))
             
             count = droid_backends.depth_filter(
@@ -112,27 +114,38 @@ def droid_visualization(video, device="cuda:0"):
 
                 if ix in droid_visualization.cameras:
                     vis.remove_geometry(droid_visualization.cameras[ix])
+                    remTrajQueue.put([np.asarray(droid_visualization.cameras[ix].points)[0]])
                     del droid_visualization.cameras[ix]
-
+               
                 if ix in droid_visualization.points:
                     vis.remove_geometry(droid_visualization.points[ix])
+                    #global removePts
+                    remQueue.put(np.asarray(droid_visualization.points[ix].points))
+                    #removePts=np.append(removePts,np.asarray(droid_visualization.points[ix].points),axis=0)
                     del droid_visualization.points[ix]
-
                 ### add camera actor ###
                 cam_actor = create_camera_actor(True)
                 cam_actor.transform(pose)
                 vis.add_geometry(cam_actor)
+                #global trajPoints
+                trajQueue.put([np.asarray(cam_actor.points)[0]])
+                #trajPoints=np.append(trajPoints,[np.asarray(cam_actor.points)[0]],axis=0)
+
                 droid_visualization.cameras[ix] = cam_actor
 
                 mask = masks[i].reshape(-1)
                 pts = points[i].reshape(-1, 3)[mask].cpu().numpy()
+                #global savePts
+                
                 clr = images[i].reshape(-1, 3)[mask].cpu().numpy()
                 
                 ## add point actor ###
                 point_actor = create_point_actor(pts, clr)
+                #savePts=np.append(savePts,np.asarray(point_actor.points),axis=0)
+
+                saveQueue.put(np.asarray(point_actor.points))
                 vis.add_geometry(point_actor)
                 droid_visualization.points[ix] = point_actor
-
             # hack to allow interacting with vizualization during inference
             if len(droid_visualization.cameras) >= droid_visualization.warmup:
                 cam = vis.get_view_control().convert_from_pinhole_camera_parameters(cam)
@@ -146,9 +159,17 @@ def droid_visualization(video, device="cuda:0"):
     vis.register_animation_callback(animation_callback)
     vis.register_key_callback(ord("S"), increase_filter)
     vis.register_key_callback(ord("A"), decrease_filter)
-
     vis.create_window(height=540, width=960)
     vis.get_render_option().load_from_json("misc/renderoption.json")
 
     vis.run()
+    #print("saving ",savePts.shape)
+    #np.save("reconstructions/benchpoints2.npy", savePts)
+#
+    #print("saving traj points",trajPoints.shape)
+    #np.save("reconstructions/trajPoints.npy", trajPoints)
+#
+    #print("saving remove pts",removePts.shape)
+    #np.save("reconstructions/benchremovepoints2.npy", removePts)
+    #vis.capture_depth_point_cloud("points.ply",convert_to_world_coordinate=True)
     vis.destroy_window()
